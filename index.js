@@ -190,6 +190,150 @@ function parser(tokens) {
   return ast;
 };
 
+/**
+ * The Traverser
+ * 
+ * (uses a 'visitor' model, where the visitor enters the node,
+ * and exits the node when it's done with all child nodes)
+ */
+function traverser(ast, visitor) {
+
+  // function to allow us to iterate an array and traverse its nodes
+  function traverseArray(array, parent) {
+    array.forEach(child => {
+      traverseNode(child, parent);
+    })
+  }
+
+  // traverses a node, contains the parent so that it can be passed to visitor methods
+  function traverseNode(node, parent) {
+
+    // get visitor methods for this type
+    let methods = visitor[node.type];
+
+    // call enter method if available
+    if (methods && methods.enter) {
+      methods.enter(node, parent);
+    }
+
+    // take action according to current node type
+    switch (node.type) {
+      // for the top level program we will traverse into our nodes
+      case 'Program':
+        traverseArray(node.body, node);
+        break;
+
+      // CallExpressions have their params traversed in the same way
+      case 'CallExpression':
+        traverseArray(node.params, node);
+        break;
+
+      // NumberLiteral and StringLiteral do not have child nodes to traverse
+      case 'NumberLiteral':
+      case 'StringLiteral':
+        break;
+
+      // throw error if there's an unrecognized node type
+      default:
+        throw new TypeError(`Unknown node type: ${node.type}`);
+    }
+
+    // if applicable, call the exit method for this node type
+    if (methods && methods.exit) {
+      methods.exit(node, parent);
+    }
+  }
+
+  // begin traversing nodes with our root ast, and no parent visitor
+  traverseNode(ast, null);
+}
+
+/**
+ * The Transformer
+ * - transforms our AST by passing it to the Traverser with a visitor function
+ */
+// transformer revices the lisp ast
+function transformer(ast) {
+
+  // initialize our new ast
+  let newAst = {
+    type: 'Program',
+    body: [],
+  };
+
+  // apparently this part is hacky but works
+  // context is just a reference from the old ast to the new ast
+  ast._context = newAst.body;
+
+  // call traverser with the ast and a visitor we define here
+  traverser(ast, {
+
+    NumberLiteral: {
+      // visit on enter
+      enter(node, parent) {
+        // push to the parent context
+        parent._context.push({
+          type: 'StringLiteral',
+          value: node.value,
+        });
+      },
+    },
+
+    // same thing for StringLiteral
+    StringLiteral: {
+      enter(node, parent) {
+        parent._context.push({
+          type: 'StringLiteral',
+          value: node.value,
+        });
+      },
+    },
+
+    // CallExpression is the tricky one
+    CallExpression: {
+      enter(node, parent) {
+
+        // initialize CallExpression node with 'Identifier'
+        let expression = {
+          type: 'CallExpression',
+          callee: {
+            type: 'Identifier',
+            name: node.name,
+          },
+          arguments: [],
+        };
+
+        // create a new context on the original to push arguments
+        node._context = expression.arguments;
+
+        // if parent node is not also CallExpression we wrap it in an ExpressionStatement
+        if (parent.type !== 'CallExpression') {
+          expression = {
+            type: 'ExpressionStatement',
+            expression: expression,
+          };
+        }
+
+        // push to the parent context
+        parent._context.push(expression);
+      },
+    }
+  });
+
+  // return the new, transformed ast
+  return newAst;
+}
+
+
+
+
 const tokens = tokenizer('(add 3 (subtract 9 7))');
+
 const parsed = parser(tokens);
-console.log(JSON.stringify(parsed, null, 2));
+const prettyParsed = JSON.stringify(parsed, null, 2);
+console.log(prettyParsed);
+
+const transformed = transformer(parsed);
+const prettyTransformed = JSON.stringify(transformed, null, 2);
+console.log(prettyTransformed);
+
